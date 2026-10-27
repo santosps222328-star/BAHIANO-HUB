@@ -1,0 +1,408 @@
+--!nocheck
+--[[
+    ═══════════════════════════════════════════════════════════════════
+    BAHIANO HUB — Performance Optimizer
+    Versão: 1.0.0
+    Repo:   https://github.com/santosps222328-star/BAHIANO-HUB
+
+    OBJETIVO
+      Reduzir carga visual (partículas, feixes, trilhas, sombras) e
+      medir o impacto REAL no desempenho com A/B testing na mesma sessão.
+
+    NÃO FAZ
+      x Combate, PvP, hitbox, dano, alcance
+      x Roubo de conta / kick / crash
+      x Modificação de gameplay (velocidade, teleporte, cooldown)
+
+    USO
+      loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/santosps222328-star/BAHIANO-HUB/main/BahianoHub.lua"
+      ))()
+
+    CONTROLES
+      F2 — medir BASELINE      (otimizador OFF)
+      F3 — medir OTIMIZADO     (otimizador ON)
+      F4 — aplicar otimizador
+      F5 — reverter otimizador
+      F6 — comparar resultados
+      F7 — mostrar/ocultar painel
+    ═══════════════════════════════════════════════════════════════════
+]]
+
+local Players    = game:GetService("Players")
+local Lighting   = game:GetService("Lighting")
+local Workspace  = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UIS        = game:GetService("UserInputService")
+
+local LP = Players.LocalPlayer
+
+-- ═══════════════════════════════════════════════════════════════
+-- CONFIG
+-- ═══════════════════════════════════════════════════════════════
+local CONFIG = {
+    version              = "1.0.0",
+    disableRemoteVisuals = true,   -- partículas/feixes do mapa e de outros players
+    disableLocalVisuals  = false,  -- NÃO mexe nos SEUS efeitos
+    globalShadows        = false,
+    stripLightShadows    = true,
+    sampleSeconds        = 6,      -- duração de cada medição
+}
+
+-- ═══════════════════════════════════════════════════════════════
+-- OTIMIZADOR
+-- ═══════════════════════════════════════════════════════════════
+local VISUAL_CLASSES = {
+    ParticleEmitter = true, Beam = true, Trail = true,
+    Smoke = true, Fire = true, Sparkles = true,
+}
+
+local Optimizer = {
+    active = false,
+    disabled = {},
+    connections = {},
+}
+
+local function isLocalChar(inst)
+    local ch = LP.Character
+    return ch ~= nil and inst:IsDescendantOf(ch)
+end
+
+local function shouldOptimize(inst)
+    if not VISUAL_CLASSES[inst.ClassName] then return false end
+    if isLocalChar(inst) and not CONFIG.disableLocalVisuals then return false end
+    return true
+end
+
+local function killVisual(inst)
+    if not shouldOptimize(inst) then return end
+    if inst:IsA("ParticleEmitter") or inst:IsA("Beam") or inst:IsA("Trail")
+        or inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") then
+        if inst.Enabled then
+            table.insert(Optimizer.disabled, {inst = inst, prop = "Enabled", value = true})
+            pcall(function() inst.Enabled = false end)
+        end
+    end
+end
+
+local function killLightShadow(inst)
+    if CONFIG.stripLightShadows and
+        (inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight")) then
+        if inst.Shadows then
+            table.insert(Optimizer.disabled, {inst = inst, prop = "Shadows", value = true})
+            pcall(function() inst.Shadows = false end)
+        end
+    end
+end
+
+function Optimizer.apply()
+    if Optimizer.active then return 0 end
+    Optimizer.active = true
+    Optimizer.disabled = {}
+
+    for _, inst in ipairs(Workspace:GetDescendants()) do killVisual(inst) end
+    for _, inst in ipairs(Lighting:GetDescendants())  do killLightShadow(inst) end
+
+    table.insert(Optimizer.connections,
+        Workspace.DescendantAdded:Connect(function(i)
+            task.defer(function() killVisual(i) end)
+        end)
+    )
+
+    pcall(function() Lighting.GlobalShadows = CONFIG.globalShadows end)
+    return #Optimizer.disabled
+end
+
+function Optimizer.revert()
+    if not Optimizer.active then return 0 end
+    Optimizer.active = false
+
+    for _, c in ipairs(Optimizer.connections) do
+        pcall(function() c:Disconnect() end)
+    end
+    Optimizer.connections = {}
+
+    local restored = 0
+    for _, e in ipairs(Optimizer.disabled) do
+        if e.inst and e.inst.Parent then
+            pcall(function() e.inst[e.prop] = e.value end)
+            restored = restored + 1
+        end
+    end
+    Optimizer.disabled = {}
+    pcall(function() Lighting.GlobalShadows = true end)
+    return restored
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- MEDIÇÃO
+-- ═══════════════════════════════════════════════════════════════
+local function measure(duration)
+    local deltas = {}
+    local t0 = os.clock()
+    local last = t0
+    local conn
+    conn = RunService.RenderStepped:Connect(function()
+        local now = os.clock()
+        table.insert(deltas, now - last)
+        last = now
+        if now - t0 >= duration then
+            conn:Disconnect()
+        end
+    end)
+
+    local timeout = t0 + duration + 2
+    while conn.Connected and os.clock() < timeout do
+        task.wait(0.05)
+    end
+    if conn.Connected then conn:Disconnect() end
+
+    table.sort(deltas)
+    local n = #deltas
+    if n == 0 then return {avg = 0, p1 = 0, p95 = 0, frames = 0} end
+
+    local sum = 0
+    for _, d in ipairs(deltas) do sum = sum + d end
+
+    local avg = n / sum
+    local p95 = deltas[math.floor(n * 0.95)] * 1000
+    local worst = deltas[math.max(1, math.floor(n * 0.99))]
+    local p1 = 1 / worst
+
+    return {avg = avg, p1 = p1, p95 = p95, frames = n}
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- UI
+-- ═══════════════════════════════════════════════════════════════
+local parentGui = (gethui and gethui()) or LP:WaitForChild("PlayerGui")
+local old = parentGui:FindFirstChild("BahianoHub")
+if old then old:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "BahianoHub"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = parentGui
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(380, 500)
+main.Position = UDim2.new(0, 20, 0, 80)
+main.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(60, 60, 72)
+stroke.Thickness = 1
+stroke.Parent = main
+
+-- Barra de título
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 36)
+title.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+title.BorderSizePixel = 0
+title.Text = "  BAHIANO HUB  •  v" .. CONFIG.version
+title.TextColor3 = Color3.fromRGB(230, 230, 240)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = main
+Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+-- FPS counter
+local fpsLabel = Instance.new("TextLabel")
+fpsLabel.Size = UDim2.new(1, -20, 0, 22)
+fpsLabel.Position = UDim2.new(0, 10, 0, 42)
+fpsLabel.BackgroundTransparency = 1
+fpsLabel.Font = Enum.Font.Code
+fpsLabel.TextSize = 13
+fpsLabel.TextColor3 = Color3.fromRGB(150, 220, 255)
+fpsLabel.TextXAlignment = Enum.TextXAlignment.Left
+fpsLabel.Text = "FPS: --  |  frame: -- ms  |  status: OFF"
+fpsLabel.Parent = main
+
+-- Log
+local logBox = Instance.new("ScrollingFrame")
+logBox.Size = UDim2.new(1, -20, 1, -310)
+logBox.Position = UDim2.new(0, 10, 0, 70)
+logBox.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+logBox.BorderSizePixel = 0
+logBox.CanvasSize = UDim2.new(0, 0, 0, 0)
+logBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
+logBox.ScrollBarThickness = 4
+logBox.Parent = main
+Instance.new("UICorner", logBox).CornerRadius = UDim.new(0, 6)
+
+local logLayout = Instance.new("UIListLayout")
+logLayout.Padding = UDim.new(0, 3)
+logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+logLayout.Parent = logBox
+
+local logPad = Instance.new("UIPadding")
+logPad.PaddingLeft = UDim.new(0, 6)
+logPad.PaddingRight = UDim.new(0, 6)
+logPad.PaddingTop = UDim.new(0, 6)
+logPad.PaddingBottom = UDim.new(0, 6)
+logPad.Parent = logBox
+
+local logOrder = 0
+local function log(msg, color)
+    logOrder = logOrder + 1
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, 0, 0, 16)
+    l.BackgroundTransparency = 1
+    l.Font = Enum.Font.Code
+    l.TextSize = 12
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextColor3 = color or Color3.fromRGB(200, 200, 210)
+    l.Text = msg
+    l.LayoutOrder = logOrder
+    l.Parent = logBox
+    print("[BahianoHub] " .. msg)
+end
+
+local function clearLog()
+    for _, c in ipairs(logBox:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    logOrder = 0
+end
+
+-- Botões
+local btnFrame = Instance.new("Frame")
+btnFrame.Size = UDim2.new(1, -20, 0, 190)
+btnFrame.Position = UDim2.new(0, 10, 1, -200)
+btnFrame.BackgroundTransparency = 1
+btnFrame.Parent = main
+
+local btnLayout = Instance.new("UIGridLayout")
+btnLayout.CellSize = UDim2.new(0.5, -5, 0, 34)
+btnLayout.CellPadding = UDim2.new(0, 10, 0, 6)
+btnLayout.SortOrder = Enum.SortOrder.LayoutOrder
+btnLayout.Parent = btnFrame
+
+local function makeBtn(text, order, color)
+    local b = Instance.new("TextButton")
+    b.BackgroundColor3 = color or Color3.fromRGB(35, 35, 44)
+    b.TextColor3 = Color3.fromRGB(230, 230, 240)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.Text = text
+    b.LayoutOrder = order
+    b.AutoButtonColor = true
+    b.Parent = btnFrame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(60, 60, 72)
+    s.Thickness = 1
+    s.Parent = b
+    return b
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- AÇÕES
+-- ═══════════════════════════════════════════════════════════════
+local results = { base = nil, opt = nil }
+
+local function fmt(n) return string.format("%.1f", n) end
+
+local function measureBaseline()
+    Optimizer.revert()
+    task.wait(0.5)
+    log("medindo BASELINE (" .. CONFIG.sampleSeconds .. "s)...", Color3.fromRGB(255, 220, 130))
+    local r = measure(CONFIG.sampleSeconds)
+    results.base = r
+    log(string.format("  → avg=%.1f | 1%%low=%.1f | p95=%.2fms | frames=%d",
+        r.avg, r.p1, r.p95, r.frames), Color3.fromRGB(150, 220, 150))
+end
+
+local function measureOptimized()
+    local count = Optimizer.apply()
+    log("otimizador aplicado (" .. count .. " efeitos desligados)", Color3.fromRGB(150, 220, 150))
+    task.wait(0.5)
+    log("medindo OTIMIZADO (" .. CONFIG.sampleSeconds .. "s)...", Color3.fromRGB(255, 220, 130))
+    local r = measure(CONFIG.sampleSeconds)
+    results.opt = r
+    log(string.format("  → avg=%.1f | 1%%low=%.1f | p95=%.2fms | frames=%d",
+        r.avg, r.p1, r.p95, r.frames), Color3.fromRGB(150, 220, 150))
+end
+
+local function compare()
+    if not results.base or not results.opt then
+        log("faltam medições — rode F2 e F3", Color3.fromRGB(255, 130, 130))
+        return
+    end
+    local b, o = results.base, results.opt
+    log("═══ COMPARATIVO ═══", Color3.fromRGB(180, 200, 255))
+    log(string.format("  avg FPS   : %.1f → %.1f  (Δ %+.1f)",
+        b.avg, o.avg, o.avg - b.avg), Color3.fromRGB(200, 220, 255))
+    log(string.format("  1%% low FPS : %.1f → %.1f  (Δ %+.1f)",
+        b.p1, o.p1, o.p1 - b.p1), Color3.fromRGB(200, 220, 255))
+    log(string.format("  p95 frame : %.2f → %.2f ms  (Δ %+.2f)",
+        b.p95, o.p95, o.p95 - b.p95), Color3.fromRGB(200, 220, 255))
+    log("═══════════════════", Color3.fromRGB(180, 200, 255))
+end
+
+makeBtn("① Medir Baseline", 1).MouseButton1Click:Connect(measureBaseline)
+makeBtn("② Aplicar + Medir", 2, Color3.fromRGB(30, 55, 40)).MouseButton1Click:Connect(measureOptimized)
+makeBtn("③ Reverter", 3).MouseButton1Click:Connect(function()
+    local n = Optimizer.revert()
+    log("otimizador revertido (" .. n .. " restaurados)", Color3.fromRGB(255, 200, 130))
+end)
+makeBtn("④ Comparar", 4, Color3.fromRGB(40, 40, 60)).MouseButton1Click:Connect(compare)
+makeBtn("Limpar log", 5).MouseButton1Click:Connect(clearLog)
+makeBtn("Fechar", 6, Color3.fromRGB(60, 30, 30)).MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- FPS counter contínuo
+-- ═══════════════════════════════════════════════════════════════
+local fpsFrames, fpsStart = 0, os.clock()
+local currentFps, currentFrameMs = 0, 0
+RunService.RenderStepped:Connect(function(dt)
+    fpsFrames = fpsFrames + 1
+    currentFrameMs = dt * 1000
+    local elapsed = os.clock() - fpsStart
+    if elapsed >= 0.5 then
+        currentFps = fpsFrames / elapsed
+        fpsFrames = 0
+        fpsStart = os.clock()
+        local status = Optimizer.active and "ON" or "OFF"
+        local statusColor = Optimizer.active and "🟢" or "⚪"
+        fpsLabel.Text = string.format(
+            "FPS: %.0f  |  frame: %.1f ms  |  otimizador: %s %s",
+            currentFps, currentFrameMs, statusColor, status
+        )
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- KEYBINDS
+-- ═══════════════════════════════════════════════════════════════
+UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    local k = input.KeyCode
+    if     k == Enum.KeyCode.F2 then measureBaseline()
+    elseif k == Enum.KeyCode.F3 then measureOptimized()
+    elseif k == Enum.KeyCode.F4 then
+        local n = Optimizer.apply()
+        log("otimizador aplicado (" .. n .. " efeitos desligados)", Color3.fromRGB(150, 220, 150))
+    elseif k == Enum.KeyCode.F5 then
+        local n = Optimizer.revert()
+        log("otimizador revertido (" .. n .. " restaurados)", Color3.fromRGB(255, 200, 130))
+    elseif k == Enum.KeyCode.F6 then compare()
+    elseif k == Enum.KeyCode.F7 then main.Visible = not main.Visible
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- BOOT
+-- ═══════════════════════════════════════════════════════════════
+log("Bahiano Hub v" .. CONFIG.version .. " carregado.", Color3.fromRGB(180, 200, 255))
+log("Vá para uma área cheia de efeitos e siga ① → ② → ④", Color3.fromRGB(180, 180, 200))
+log("Conta alt recomendada. Script de teste, sem exploits de gameplay.", Color3.fromRGB(255, 200, 130))
