@@ -1,0 +1,2 @@
+-- Após enviar os arquivos do pacote para seu GitHub, execute esta linha no Delta.
+loadstring(game:HttpGet("https://raw.githubusercontent.com/santosps222328-star/BAHIANO-HUB/main/TestarExecutor.luau"))()
