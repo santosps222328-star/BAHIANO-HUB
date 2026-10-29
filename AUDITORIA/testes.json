@@ -1,0 +1,8 @@
+{
+  "compiledFiles": 19,
+  "result": [
+    "118 checks passed; mocked Luau only, not Roblox/Delta validation."
+  ],
+  "originalsExecuted": false,
+  "robloxRuntimeTested": false
+}
