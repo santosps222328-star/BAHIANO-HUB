@@ -1,1 +1,22 @@
-
+-- Referências estáticas dos seis arquivos fornecidos. Não comprovam drops atuais.
+return {
+    {name="Bones / Ossos",sea=3,enemies={"Reborn Skeleton","Living Zombie","Demonic Soul","Posessed Mummy","Possessed Mummy"}},
+    {name="Ectoplasm",sea=2,enemies={"Ship Deckhand","Ship Engineer","Ship Steward","Ship Officer"}},
+    {name="Cake mobs",sea=3,enemies={"Cookie Crafter","Cake Guard","Baking Staff","Head Baker"}},
+    {name="Angel Wings",sea=1,enemies={"Shanda","Royal Squad","Royal Soldier"}},
+    {name="Leather + Scrap Metal (Sea 1)",sea=1,enemies={"Pirate","Brute"}},
+    {name="Leather + Scrap Metal (Sea 2)",sea=2,enemies={"Marine Captain"}},
+    {name="Scrap Metal (Sea 3)",sea=3,enemies={"Jungle Pirate","Forest Pirate"}},
+    {name="Magma Ore (Sea 1)",sea=1,enemies={"Military Soldier","Military Spy"}},
+    {name="Magma Ore (Sea 2)",sea=2,enemies={"Magma Ninja","Lava Pirate"}},
+    {name="Fish Tail (Sea 1)",sea=1,enemies={"Fishman Warrior","Fishman Commando"}},
+    {name="Fish Tail (Sea 3)",sea=3,enemies={"Fishman Raider","Fishman Captain"}},
+    {name="Mystic Droplet",sea=2,enemies={"Water Fighter"}},
+    {name="Radioactive Material",sea=2,enemies={"Factory Staff"}},
+    {name="Vampire Fang",sea=2,enemies={"Vampire"}},
+    {name="Conjured Cocoa",sea=3,enemies={"Chocolate Bar Battler","Cocoa Warrior"}},
+    {name="Dragon Scale",sea=3,enemies={"Dragon Crew Archer","Dragon Crew Warrior"}},
+    {name="Gunpowder",sea=3,enemies={"Pistol Billionaire"}},
+    {name="Mini Tusk",sea=3,enemies={"Mythological Pirate"}},
+    {name="Demonic Wisp",sea=3,enemies={"Demonic Soul"}},
+}
